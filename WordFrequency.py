@@ -2,6 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 QUERY_URL = 'https://www.google.com/search?q={}&aqs=edge..69i57l2j69i59l2j69i61l3.837j0j4&sourceid=chrome&ie=UTF-8'
 HEADERS = {
@@ -22,6 +23,14 @@ HEADERS = {
 	'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
 }
 
+def addMagnitudeSuffix(num):
+	s = str(num)
+	order = (len(s)-1) // 3
+	order = order if order <= 5 else 0
+	letter = ('', 'k', 'M', 'B', 'T', 'Q')[order]
+	s = s[:len(s) - order * 3] + '.' + s[len(s) - order * 3:]
+	s = s.rstrip('0').rstrip('.')
+	return s + letter
 def parseResponse(res):
 	s = BeautifulSoup(res.text, 'html.parser')
 	stats = s.find('div', {'id': 'result-stats'})
@@ -29,9 +38,15 @@ def parseResponse(res):
 	text = stats.text.split(':')[1]
 	text = text.split('(')[0].strip()
 	text = text.replace('\xa0', '')
-	return int(text)
-
-def getFrequency(word, session):
+	result = int(text)
+	return result, addMagnitudeSuffix(result)
+def sessionFromCookies(cookies):
+	session = requests.Session()
+	for cookie in cookies:
+		session.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'])
+	return session
+def getFrequency(word, cookies) -> tuple[int, str]:
+	session = sessionFromCookies(cookies)
 	url = QUERY_URL.format(word)
 	res = session.get(url, headers=HEADERS)
 	return parseResponse(res)
@@ -44,14 +59,25 @@ def doConsent():
 	buttons = driver.find_elements(By.XPATH, "//button")
 	button = [b for b in buttons if b.text == 'Přijmout vše'][0]
 	button.click()
-	
 	cookies = driver.get_cookies()
-	session = requests.Session()
-	for cookie in cookies:
-		session.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'])
 	driver.quit()
-	return session
+	return cookies
 
-session = doConsent()
-f = getFrequency('maso', session)
-print(f)
+def getFrequencies(cookies, words):
+	frequencies = {}
+	with ThreadPoolExecutor() as executor:
+		futures = {executor.submit(getFrequency, word, cookies):word for word in words}
+		for future in as_completed(futures):
+			word = futures[future]
+			freq = future.result()
+			frequencies[word] = freq
+	return frequencies
+
+def main():
+	cookies = doConsent()
+	words = ['maso', 'baba', 'žena', 'díťě']
+	freqs = getFrequencies(cookies, words)
+	print(freqs)
+
+if __name__ == '__main__':
+	main()
